@@ -14,10 +14,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
 
   try {
     const token = auth_header.split(" ")[1];
-    console.log(token);
     const decode = jwt.verify(token, process.env.JWT_SECRET_KEY!) as JwtPayload;
-    console.log(decode);
-    // for get request that have no body
     (req as any).userId = decode.id;
     next();
   } catch (err) {

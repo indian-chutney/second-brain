@@ -2,12 +2,19 @@
 
 import { model, Schema, Types } from "mongoose";
 
-const contentTypes = ["image", "article", "video", "audio"];
+const contentTypes = ["tweets", "notion", "article", "video", "other"];
 
 const users = new Schema({
   email: { type: String, unique: true },
   username: { type: String, unique: true },
   password: { type: String },
+});
+
+users.virtual("links", {
+  ref: "content",
+  localField: "_id",
+  foreignField: "userid",
+  count: true,
 });
 
 const tags = new Schema({

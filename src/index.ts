@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 import bcrypt from "bcrypt";
 import * as dotenv from "dotenv";
+import cors from "cors";
 
 import { UserModel, ContentModel, TagsModel, LinkModel } from "./db";
 import { authenticate } from "./middleware";
@@ -11,6 +12,7 @@ import { hashnum } from "./utils/hashnum";
 dotenv.config();
 const app = express();
 app.use(express.json());
+app.use(cors());
 
 app.post(
   "/api/v1/signup",
@@ -38,14 +40,16 @@ app.post(
         email: email,
         username: username,
         password: hash_pwd,
+        links: 0,
       });
 
       return void res.json({
         message: "signup successful",
       });
     } catch (err) {
+      console.log(err);
       return void res.status(500).json({
-        message: "error creating to user",
+        message: "User already exists",
       });
     }
   },
@@ -54,16 +58,16 @@ app.post(
 app.post(
   "/api/v1/signin",
   async (req: express.Request, res: express.Response) => {
-    const { username, password } = req.body;
+    const { email, password } = req.body;
 
     try {
       const user = await UserModel.findOne({
-        username: username,
+        email: email,
       });
 
       if (!user) {
         return void res.status(403).json({
-          message: "no username found",
+          message: "no user found",
         });
       }
 
@@ -99,12 +103,11 @@ app.get(
   "/api/v1/content",
   async (req: express.Request, res: express.Response) => {
     const id = (req as any).userId;
-    console.log(typeof id);
     const content = await ContentModel.find({
       userid: id,
-    }).populate("userid", "username");
-
-    console.log(content);
+    })
+      .populate("userid", "username")
+      .populate("tags", "title");
 
     res.json({
       content,
@@ -118,7 +121,7 @@ app.post(
   async (req: express.Request, res: express.Response) => {
     const reqBody = z.object({
       link: z.string().url(),
-      type: z.enum(["audio", "video", "image", "article"]),
+      type: z.enum(["tweets", "notion", "audio", "video", "article"]),
       title: z.string().max(20),
       tags: z.array(z.string()),
     });
@@ -168,20 +171,164 @@ app.post(
   },
 );
 
+app.get(
+  "/api/v1/settings",
+  async (req: express.Request, res: express.Response) => {
+    const id = (req as any).userId;
+
+    try {
+      const userData = (await UserModel.findById(id).populate("links")) as any;
+
+      if (!userData) {
+        res.status(404).json({
+          message: "User not found",
+        });
+        return;
+      }
+
+      const shareData = await LinkModel.findOne({ userid: id });
+      let isShared, hash;
+      if (shareData) {
+        isShared = true;
+        hash = shareData.hash;
+      }
+
+      res.json({
+        username: userData.username,
+        email: userData.email,
+        links: userData.links,
+        ...(isShared && {
+          isShared: true,
+          hash: hash,
+        }),
+      });
+      return;
+    } catch (err) {
+      console.error("Database error:", err);
+      res.status(500).json({
+        message: "Internal server error",
+      });
+      return;
+    }
+  },
+);
+
+app.post(
+  "/api/v1/settings/change_password",
+  async (req: express.Request, res: express.Response) => {
+    const id = (req as any).userId;
+
+    const given = req.body;
+
+    try {
+      const user = await UserModel.findById(id);
+
+      if (!user) {
+        res.status(404).json({
+          message: "no user found with token",
+        });
+        return;
+      }
+      const result = await bcrypt.compare(
+        given.old_pwd,
+        user.password as string,
+      );
+
+      if (!result) {
+        res.status(401).json({
+          message: "wrong password",
+        });
+        return;
+      }
+
+      const update_pwd = given.new_pwd;
+      if (!update_pwd) {
+        res.status(401).json({
+          message: "no new password given",
+        });
+      }
+
+      await UserModel.findByIdAndUpdate(id, {
+        password: bcrypt.hashSync(update_pwd, 5),
+      });
+
+      res.json({
+        message: "successfully password updated",
+      });
+      return;
+    } catch (err) {
+      res.status(500).json({
+        message: "error in db",
+      });
+    }
+  },
+);
+
 app.delete(
   "/api/v1/content/:deleteId",
   async (req: express.Request, res: express.Response) => {
     const delId = req.params.deleteId;
 
-    await ContentModel.findOneAndDelete({
-      _id: delId,
-      userid: (req as any).userId,
-    });
+    try {
+      await ContentModel.findOneAndDelete({
+        _id: delId,
+        userid: (req as any).userId,
+      });
 
-    res.json({
-      message: "deleted content successfully",
-    });
-    return;
+      res.json({
+        message: "deleted content successfully",
+      });
+      return;
+    } catch (err) {
+      res.json({
+        message: "error in db" + err,
+      });
+      return;
+    }
+  },
+);
+
+app.put(
+  "/api/v1/content/:updateId",
+  async (req: express.Request, res: express.Response) => {
+    const updateId = req.params.updateId;
+
+    const updateData = req.body;
+
+    try {
+      const updatedContent = await ContentModel.findOneAndUpdate(
+        {
+          _id: updateId,
+          userid: (req as any).userId,
+        },
+        {
+          ...updateData,
+        },
+        {
+          new: true,
+          runValidators: true,
+        },
+      );
+
+      if (!updatedContent) {
+        res.status(404).json({
+          message:
+            "Content not found or you don't have permission to update it",
+        });
+        return;
+      }
+
+      res.json({
+        message: "Content updated successfully",
+        data: updatedContent,
+      });
+      return;
+    } catch (err) {
+      res.json({
+        message: "error in db" + err,
+      });
+      return;
+    }
   },
 );
 
@@ -211,7 +358,7 @@ app.post(
       });
 
       res.json({
-        link: "frontend_url" + hash,
+        link: hash,
       });
       return;
     } catch (err) {
