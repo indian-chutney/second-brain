@@ -27,7 +27,7 @@ app.post(
     console.log(parsed);
 
     if (!parsed.success) {
-      return void res.status(403).json({
+      return void res.status(400).json({
         message: "invalid creds",
       });
     }
@@ -127,7 +127,7 @@ app.post(
     });
 
     if (!reqBody.safeParse(req.body)) {
-      res.json({
+      res.status(400).json({
         message: "invalid values",
       });
       return;
@@ -243,9 +243,10 @@ app.post(
 
       const update_pwd = given.new_pwd;
       if (!update_pwd) {
-        res.status(401).json({
+        res.status(400).json({
           message: "no new password given",
         });
+        return;
       }
 
       await UserModel.findByIdAndUpdate(id, {
@@ -294,6 +295,33 @@ app.put(
     const updateId = req.params.updateId;
 
     const updateData = req.body;
+    const reqBody = z.object({
+      link: z.string().url().optional(),
+      type: z
+        .enum(["tweets", "notion", "audio", "video", "article"])
+        .optional(),
+      title: z.string().max(20).optional(),
+      tags: z.array(z.string()).optional(),
+    });
+
+    const parsed = reqBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: "Invalid data format",
+      });
+      return;
+    }
+    if (updateData.tags) {
+      const tags_ref = [];
+      for (const tag of updateData.tags) {
+        let ref = await TagsModel.findOne({ title: tag });
+        if (!ref) {
+          ref = await TagsModel.create({ title: tag });
+        }
+        tags_ref.push(ref._id);
+      }
+      updateData.tags = tags_ref;
+    }
 
     try {
       const updatedContent = await ContentModel.findOneAndUpdate(
@@ -324,7 +352,7 @@ app.put(
       });
       return;
     } catch (err) {
-      res.json({
+      res.status(500).json({
         message: "error in db" + err,
       });
       return;
