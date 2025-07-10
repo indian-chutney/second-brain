@@ -12,7 +12,11 @@ import { hashnum } from "./utils/hashnum";
 dotenv.config();
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL,
+  }),
+);
 
 app.post(
   "/api/v1/signup",
@@ -451,3 +455,5 @@ async function main() {
 }
 
 main();
+
+export default app;
